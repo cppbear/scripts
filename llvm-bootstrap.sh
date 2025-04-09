@@ -85,7 +85,6 @@ fi
 # Check Stage 1 Build
 check_stage1_build() {
     local found=0
-
     # Check installation directory
     if $ENABLE_INSTALL_STAGE1 && [ -x "$STAGE1_INSTALL_DIR/bin/clang" ]; then
         found=1
@@ -107,44 +106,62 @@ check_stage1_build() {
     fi
 }
 
-# Stage 1: Bootstrap compiler build
-if $RUN_STAGE1; then
-    echo "=== Running Stage 1 Build ==="
-
-    # Configure stage 1
-    cmake -S llvm -B build-stage1 -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX="$STAGE1_INSTALL_DIR" \
-        -DCMAKE_BUILD_RPATH='$ORIGIN/../lib;$ORIGIN/../lib/x86_64-unknown-linux-gnu' \
-        -DCMAKE_INSTALL_RPATH="$STAGE1_INSTALL_DIR/lib;$STAGE1_INSTALL_DIR/lib/x86_64-unknown-linux-gnu" \
-        -DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF \
-        -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF \
-        -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" \
-        -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind;compiler-rt" \
+build_stage() {
+    local stage_number=$1
+    local install_dir=$2
+    local build_dir=$3
+    local enable_install=$4
+    echo "=== Running Stage $stage_number Build ==="
+    # Common CMake options
+    local -a cmake_opts=(
+        -S llvm
+        -B "$build_dir"
+        -G Ninja
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_INSTALL_PREFIX="$install_dir"
+        -DCMAKE_BUILD_RPATH='$ORIGIN/../lib;$ORIGIN/../lib/x86_64-unknown-linux-gnu'
+        -DCMAKE_INSTALL_RPATH="$install_dir/lib;$install_dir/lib/x86_64-unknown-linux-gnu"
+        -DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF
+        -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF
+        -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb"
+        -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind;compiler-rt"
         -DLLVM_TARGETS_TO_BUILD=host
-
-    # Build stage 1
-    cmake --build build-stage1
-
-    # Install stage 1 if enabled
-    if $ENABLE_INSTALL_STAGE1; then
-        echo "=== Installing Stage 1 Build ==="
-        cmake --build build-stage1 --target install
+    )
+    # Stage 2 specific options
+    if [[ $stage_number -eq 2 ]]; then
+        cmake_opts+=(
+            -DCMAKE_C_COMPILER=clang
+            -DCMAKE_CXX_COMPILER=clang++
+            -DLLVM_ENABLE_LLD=ON
+            -DLLVM_ENABLE_LIBCXX=ON
+            -DCLANG_DEFAULT_CXX_STDLIB=libc++
+        )
+    fi
+    # Configure
+    cmake "${cmake_opts[@]}"
+    # Build
+    cmake --build "$build_dir"
+    # Install if enabled
+    if [[ $enable_install == "true" ]]; then
+        echo "=== Installing Stage $stage_number Build ==="
+        cmake --build "$build_dir" --target install
         # Validate installation
-        if [ ! -x "$STAGE1_INSTALL_DIR/bin/clang" ]; then
-            echo "Error: Stage1 installation failed! clang not found in $STAGE1_INSTALL_DIR/bin"
+        if [[ ! -x "$install_dir/bin/clang" ]]; then
+            echo "Error: Stage$stage_number installation failed! clang not found in $install_dir/bin" >&2
             exit 1
         fi
     fi
+}
+
+# Stage 1: Bootstrap compiler build
+if $RUN_STAGE1; then
+    build_stage 1 "$STAGE1_INSTALL_DIR" "build-stage1" "$ENABLE_INSTALL_STAGE1"
 fi
 
 # Stage 2: Self-hosted compiler build
 if $RUN_STAGE2; then
-    echo "=== Running Stage 2 Build ==="
-
     # Force check stage1 build
     check_stage1_build
-
     # Intelligent Path Selection (Prioritize Installation Path)
     if $ENABLE_INSTALL_STAGE1 && [ -d "$STAGE1_INSTALL_DIR/bin" ]; then
         STAGE1_BIN_DIR="$STAGE1_INSTALL_DIR/bin"
@@ -156,7 +173,6 @@ if $RUN_STAGE2; then
         echo "Error: No valid stage1 binaries found!"
         exit 1
     fi
-
     # Validate Required Files
     REQUIRED_FILES=(
         "$STAGE1_BIN_DIR/clang"
@@ -171,7 +187,6 @@ if $RUN_STAGE2; then
 
     STAGE1_ARCH_LIB_DIR="$STAGE1_LIB_DIR/x86_64-unknown-linux-gnu"
     [ -d "$STAGE1_ARCH_LIB_DIR" ] || STAGE1_ARCH_LIB_DIR="$STAGE1_LIB_DIR" # Compatible with no architecture subdirectory
-
     # Set environment variables for stage 2
     export PATH="$STAGE1_BIN_DIR:$PATH"
     export LD_LIBRARY_PATH="$STAGE1_LIB_DIR:$STAGE1_ARCH_LIB_DIR:$LD_LIBRARY_PATH"
@@ -180,36 +195,7 @@ if $RUN_STAGE2; then
     echo "Current PATH: $PATH"
     echo "Current LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
-    # Configure stage 2
-    cmake -S llvm -B build-stage2 -G Ninja \
-        -DCMAKE_C_COMPILER=clang \
-        -DCMAKE_CXX_COMPILER=clang++ \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX="$STAGE2_INSTALL_DIR" \
-        -DCMAKE_BUILD_RPATH='$ORIGIN/../lib;$ORIGIN/../lib/x86_64-unknown-linux-gnu' \
-        -DCMAKE_INSTALL_RPATH="$STAGE2_INSTALL_DIR/lib;$STAGE2_INSTALL_DIR/lib/x86_64-unknown-linux-gnu" \
-        -DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF \
-        -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF \
-        -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld;lldb" \
-        -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind;compiler-rt" \
-        -DLLVM_TARGETS_TO_BUILD=host \
-        -DLLVM_ENABLE_LLD=ON \
-        -DLLVM_ENABLE_LIBCXX=ON \
-        -DCLANG_DEFAULT_CXX_STDLIB=libc++
-
-    # Build stage 2
-    cmake --build build-stage2
-
-    # Install stage 2 if enabled
-    if $ENABLE_INSTALL_STAGE2; then
-        echo "=== Installing Stage 2 Build ==="
-        cmake --build build-stage2 --target install
-        # Validate installation
-        if [ ! -x "$STAGE2_INSTALL_DIR/bin/clang" ]; then
-            echo "Error: Stage2 installation failed! clang not found in $STAGE2_INSTALL_DIR/bin"
-            exit 1
-        fi
-    fi
+    build_stage 2 "$STAGE2_INSTALL_DIR" "build-stage2" "$ENABLE_INSTALL_STAGE2"
 fi
 
 echo "=== Build completed successfully ==="
