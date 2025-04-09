@@ -130,8 +130,8 @@ build_stage() {
     # Stage 2 specific options
     if [[ $stage_number -eq 2 ]]; then
         cmake_opts+=(
-            -DCMAKE_C_COMPILER=clang
-            -DCMAKE_CXX_COMPILER=clang++
+            -DCMAKE_C_COMPILER="$STAGE1_BIN_DIR/clang"
+            -DCMAKE_CXX_COMPILER="$STAGE1_BIN_DIR/clang++"
             -DLLVM_ENABLE_LLD=ON
             -DLLVM_ENABLE_LIBCXX=ON
             -DCLANG_DEFAULT_CXX_STDLIB=libc++
